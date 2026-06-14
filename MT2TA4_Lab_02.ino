@@ -1,0 +1,310 @@
+//Karman Sidhu - 400578131
+//MECHTRON 2TA4 - Labratory 2
+
+//This code contains both ways to run the FSM. 1. Doing test after test (pause -> timing ->pause) 1. (pause->timing->blink->pause)
+//Acutal one used right now if #2
+
+#include "DFRobot_RGBLCD1602.h"
+#include <TimerOne.h>
+#include <TimeOut.h>
+
+DFRobot_RGBLCD1602 lcd(/*RGBAddr*/ 0x6B, /*lcdCols*/ 16, /*lcdRows*/ 2);
+
+//Pushbutton Pins
+const byte pButton1 = 2; // what pin the buttons connected to
+const byte pButton2 = 3;
+const byte LED_PIN =13; // the green light
+
+unsigned long startTime = 0; //the time that begins when the light turns on
+unsigned long reactionTime = 0; // the amount of time the it took to press the button
+unsigned long fastestTime = 0xFFFFFFFF; // the fastest recorded try out of all, initialized to very high number to beeat it
+
+volatile bool blinkToggle = false; // to blink led
+bool randomPauseActive = false;  // are we in a puase
+bool displayed = false; //output displayed yet
+
+TimeOut randomTimer; // created an instance and its got to be global
+
+
+bool waitingForPB1Release = false; //  is the button released yet?
+
+
+
+
+
+
+// Prototypes (functions)
+void NoOp();
+void InitBlink();
+void InitRandomPause();
+void StopWatchStart();
+void StopWatchStop();
+void InitializeSM();
+
+void callback0(); // for timeout
+
+// Define an enumerated type for states
+typedef enum { BLINK_STATE,
+               RANDOM_PAUSE_STATE,
+               TIMING_STATE } StateType;
+
+// Define an enumerated type for actions to take in loop
+typedef enum { NOOP,
+               BLINK,
+               RANDOM_PAUSE,
+               STOPWATCH_START,
+               STOPWATCH_STOP } Action;
+
+// Define a table of pointers to the functions for each state action
+static void (*action_table[])(void) = { NoOp, InitBlink, InitRandomPause, StopWatchStart, StopWatchStop };
+
+// Global declarations to control the FSM
+StateType curr_state;
+Action curr_action;
+
+// callback function for random pause timeout 
+void callback0(){
+
+  digitalWrite(LED_PIN, HIGH); //turn eld on 
+
+  startTime = millis(); //start reaction timer after random pause ends
+
+  randomPauseActive = false; // random pause isnt active anymore
+  
+  waitingForPB1Release = false;  // not waiting for button press
+
+
+  curr_state = TIMING_STATE; //transition to time state
+  curr_action = STOPWATCH_START;
+
+}
+
+
+
+
+
+
+
+// isr to toggle led at 10 Hz
+
+void BlinkISR(){ // to togler the LED at 10 Hz
+  if (curr_state == BLINK_STATE){
+    blinkToggle= !blinkToggle; //boolean value to to toggle
+  }
+  else{
+    blinkToggle = false; // led off in other states
+  }
+}
+
+
+
+
+
+
+
+void setup() {
+  lcd.init();
+
+  pinMode(pButton1, INPUT_PULLUP); // pull up for pin 1
+  pinMode(pButton2, INPUT_PULLUP); // pull up for pin 2
+  pinMode(LED_PIN, OUTPUT); // led is an output
+
+  randomSeed(analogRead(A0)); // seed for random number using empty analog pin
+
+
+  //The 10 Hz Blink Required
+  Timer1.initialize(50000); // interrupts every 50 ms or 10 Hz
+  Timer1.attachInterrupt(BlinkISR); //attaching the isr to timer interrupt
+
+  InitializeSM(); // initializing the fsm 
+}
+
+
+
+
+
+void loop() {  // only executes the action in relation to the current state
+  action_table[curr_action]();
+}
+
+
+
+
+
+// no operations 
+void NoOp() { 
+
+  randomTimer.handler(); // to handle any current timeouts going on
+  if (digitalRead(pButton2)==LOW){
+    InitializeSM();  // if pb2 pressed reset the fsm
+  }
+}
+
+
+
+// blink state function where led blinks at 10 hz
+void InitBlink() {
+
+  randomTimer.handler(); // handling current timeouts if there are
+
+  digitalWrite(LED_PIN, blinkToggle); // blink the led using the isr toggle
+
+  // to determine when button 1 is pressed as it goes to low
+  if (digitalRead(pButton1)==LOW && !waitingForPB1Release){
+    curr_state = RANDOM_PAUSE_STATE;
+    curr_action = RANDOM_PAUSE;
+    waitingForPB1Release = true; // locking PB1 to stop holding pb1 during pause
+  }
+
+  if (digitalRead(pButton2)==LOW){
+    InitializeSM();
+  }
+}
+
+
+
+
+
+
+// initializw fsm
+void InitializeSM() {
+
+  randomTimer.cancel();  //cancel any timers that were going on previously before being reset
+  randomPauseActive = false; //reset necessary variables
+  displayed = false; // not displayed on screen
+  waitingForPB1Release = false; // pb1 released set to false
+  fastestTime = 0xFFFFFFFF; //fastest time resets to a infinite large number
+
+  lcd.clear(); //start from begging no previous records, etc, nothing
+  lcd.print("Start...");
+
+  curr_state = BLINK_STATE; // this is the intial state
+  curr_action = BLINK; 
+}
+
+
+
+
+
+
+
+
+// rnadom delay before turning on the led 
+void InitRandomPause() {
+  
+  randomTimer.handler(); // handling and current timeouts 
+
+  digitalWrite(LED_PIN, LOW); // making sure the led is off
+
+
+// if the random delay hasnt been started yet
+  if(!randomPauseActive){ // starting timer only once
+    unsigned long delayTime = random(1000, 5001);
+
+    randomTimer.timeOut(delayTime, callback0); // setting callback when the delay ends to callback0
+
+    randomPauseActive = true; // we are currently in a pause set to true
+
+    curr_action = NOOP; // no operation during this state it will be entering
+  }
+
+  if (digitalRead(pButton2)==LOW){
+    InitializeSM();
+  }
+
+}
+// now add in an isr to read the timing 
+
+
+
+
+
+
+
+
+
+
+
+// starting to measure the reaction time when PB1 is pressed
+void StopWatchStart() {
+
+  randomTimer.handler(); // to handle any current timeouts
+
+// if the button has been pressed lets start the timer
+  if(digitalRead(pButton1)==LOW){
+    reactionTime = millis() - startTime; // calculate the reaction time 
+    curr_action = STOPWATCH_STOP; 
+  }
+
+  if (digitalRead(pButton2)==LOW){ 
+    InitializeSM();
+  }
+  
+}
+
+
+
+
+
+
+
+// to display reaction time on lcd
+void StopWatchStop() {
+
+  randomTimer.handler(); // handle any current timeouts
+  
+  digitalWrite(LED_PIN, LOW); // the led is now turned off
+
+  if (!displayed){ // if it hasnt been displayed yet
+
+   if(reactionTime<fastestTime){ // set the new fastest time if it is
+     fastestTime = reactionTime;
+    }
+
+   lcd.clear(); 
+
+   lcd.setCursor(0,0);
+   lcd.print("Time: ");
+   lcd.print (reactionTime);
+   lcd.print("ms");
+
+    lcd.setCursor(0,1);
+    lcd.print("Best: ");
+
+    lcd.print(fastestTime);
+    lcd.print("ms");
+
+    displayed = true; // output has been displayed
+
+    waitingForPB1Release = true; // locking pb1 until its been released. 
+  }
+
+// seperate if u want to go to blinking state
+
+
+  // waiting for pb1 to be released before transition to the blink state again:
+  if (waitingForPB1Release && digitalRead(pButton1)==HIGH){  
+    waitingForPB1Release = false;  // reset for next test
+    displayed = false; // reset for next test
+    curr_state = BLINK_STATE; 
+    curr_action = BLINK;
+  }
+
+  if (digitalRead(pButton2)==LOW){
+    InitializeSM(); 
+  }
+
+}
+
+ 
+  
+
+
+
+
+
+
+
+
+
+
