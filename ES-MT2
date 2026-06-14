@@ -1,5 +1,4 @@
-//Karman Sidhu - 400578131
-//MECHTRON 2TA4 - Labratory 2
+//Karman Sidhu 
 
 //This code contains both ways to run the FSM. 1. Doing test after test (pause -> timing ->pause) 1. (pause->timing->blink->pause)
 //Acutal one used right now if #2
